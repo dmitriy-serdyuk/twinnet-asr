@@ -89,7 +89,7 @@ class Convolutional(LinearLike):
         add_role(W, FILTER)
         self.parameters.append(W)
         self.add_auxiliary_variable(W.norm(2), name='W_norm')
-        if self.use_bias:
+        if getattr(self, 'use_bias', True):
             if self.tied_biases:
                 b = shared_floatx_nans((self.num_filters,), name='b')
             else:
@@ -142,7 +142,7 @@ class Convolutional(LinearLike):
             border_mode=self.border_mode,
             filter_shape=((self.num_filters, self.num_channels) +
                           self.filter_size))
-        if self.use_bias:
+        if getattr(self, 'use_bias', True):
             if self.tied_biases:
                 output += self.b.dimshuffle('x', 0, 'x', 'x')
             else:
@@ -172,10 +172,6 @@ class ConvolutionalTranspose(Convolutional):
 
     Parameters
     ----------
-    original_image_size : tuple
-        The height and width of the image that forms the output of
-        the transpose operation, which is the input of the original
-        (non-transposed) convolution.
     num_filters : int
         Number of filters at the *output* of the transposed convolution,
         i.e. the number of channels in the corresponding convolution.
@@ -190,19 +186,74 @@ class ConvolutionalTranspose(Convolutional):
         Image size of the input to the *transposed* convolution, i.e.
         the output of the corresponding convolution. Required for tied
         biases. Defaults to ``None``.
+    unused_edge : tuple, optional
+        Tuple of pixels added to the inferred height and width of the
+        output image, whose values would be ignored in the corresponding
+        forward convolution. Must be such that 0 <= ``unused_edge[i]`` <=
+        ``step[i]``. Note that this parameter is **ignored** if
+        ``original_image_size`` is specified in the constructor or manually
+        set as an attribute.
+    original_image_size : tuple, optional
+        The height and width of the image that forms the output of
+        the transpose operation, which is the input of the original
+        (non-transposed) convolution. By default, this is inferred
+        from `image_size` to be the size that has each pixel of the
+        original image touched by at least one filter application
+        in the original convolution. Degenerate cases with dropped
+        border pixels (in the original convolution) are possible, and can
+        be manually specified via this argument. See notes below.
 
     See Also
     --------
     :class:`Convolutional` : For the documentation of other parameters.
 
+    Notes
+    -----
+    By default, `original_image_size` is inferred from `image_size`
+    as being the *minimum* size of image that could have produced this
+    output. Let ``hanging[i] = original_image_size[i] - image_size[i]
+    * step[i]``. Any value of ``hanging[i]`` greater than
+    ``filter_size[i] - step[i]`` will result in border pixels that are
+    ignored by the original convolution. With this brick, any
+    ``original_image_size`` such that ``filter_size[i] - step[i] <
+    hanging[i] < filter_size[i]`` for all ``i`` can be validly specified.
+    However, no value will be output by the transposed convolution
+    itself for these extra hanging border pixels, and they will be
+    determined entirely by the bias.
+
     """
-    @lazy(allocation=['original_image_size', 'filter_size', 'num_filters',
-                      'num_channels'])
-    def __init__(self, original_image_size, filter_size, num_filters,
-                 num_channels, **kwargs):
+    @lazy(allocation=['filter_size', 'num_filters', 'num_channels'])
+    def __init__(self, filter_size, num_filters, num_channels,
+                 original_image_size=None, unused_edge=(0, 0),
+                 **kwargs):
         super(ConvolutionalTranspose, self).__init__(
             filter_size, num_filters, num_channels, **kwargs)
         self.original_image_size = original_image_size
+        self.unused_edge = unused_edge
+
+    @property
+    def original_image_size(self):
+        if self._original_image_size is None:
+            if all(s is None for s in self.image_size):
+                raise ValueError("can't infer original_image_size, "
+                                 "no image_size set")
+            if isinstance(self.border_mode, tuple):
+                border = self.border_mode
+            elif self.border_mode == 'full':
+                border = tuple(k - 1 for k in self.filter_size)
+            elif self.border_mode == 'half':
+                border = tuple(k // 2 for k in self.filter_size)
+            else:
+                border = [0] * len(self.image_size)
+            tups = zip(self.image_size, self.step, self.filter_size, border,
+                       self.unused_edge)
+            return tuple(s * (i - 1) + k - 2 * p + u for i, s, k, p, u in tups)
+        else:
+            return self._original_image_size
+
+    @original_image_size.setter
+    def original_image_size(self, value):
+        self._original_image_size = value
 
     def conv2d_impl(self, input_, W, input_shape, subsample, border_mode,
                     filter_shape):
@@ -414,6 +465,10 @@ class ConvolutionalSequence(Sequence, Initializable, Feedforward):
         need to rely on either a default border mode (usually valid)
         or one provided at construction and/or after construction
         (but before allocation).
+    tied_biases : bool, optional
+        Same meaning as in :class:`Convolutional`. Defaults to ``None``,
+        in which case no value is pushed to child :class:`Convolutional`
+        bricks.
 
     Notes
     -----
@@ -423,6 +478,9 @@ class ConvolutionalSequence(Sequence, Initializable, Feedforward):
     input dimensions of a layer to the output dimensions of the previous
     layer by the :meth:`~.Brick.push_allocation_config` method.
 
+    The push behaviour of `tied_biases` mirrors that of `use_bias` or any
+    initialization configuration: only an explicitly specified value is
+    pushed down the hierarchy. `border_mode` also has this behaviour.
     The reason the `border_mode` parameter behaves the way it does is that
     pushing a single default `border_mode` makes it very difficult to
     have child bricks with different border modes. Normally, such things
@@ -433,8 +491,9 @@ class ConvolutionalSequence(Sequence, Initializable, Feedforward):
 
     """
     @lazy(allocation=['num_channels'])
-    def __init__(self, layers, num_channels, batch_size=None, image_size=None,
-                 border_mode=None, tied_biases=False, **kwargs):
+    def __init__(self, layers, num_channels, batch_size=None,
+                 image_size=(None, None), border_mode=None, tied_biases=None,
+                 **kwargs):
         self.layers = layers
         self.image_size = image_size
         self.num_channels = num_channels
@@ -471,18 +530,20 @@ class ConvolutionalSequence(Sequence, Initializable, Feedforward):
                 continue
             if self.border_mode is not None:
                 layer.border_mode = self.border_mode
-            layer.tied_biases = self.tied_biases
+            if self.tied_biases is not None:
+                layer.tied_biases = self.tied_biases
             layer.image_size = image_size
             layer.num_channels = num_channels
             layer.batch_size = self.batch_size
-            layer.use_bias = self.use_bias
+            if getattr(self, 'use_bias', None) is not None:
+                layer.use_bias = self.use_bias
 
             # Push input dimensions to children
             layer.push_allocation_config()
 
             # Retrieve output dimensions
             # and set it for next layer
-            if layer.image_size is not None:
+            if None not in layer.image_size:
                 output_shape = layer.get_dim('output')
                 image_size = output_shape[1:]
             num_channels = layer.num_output_channels

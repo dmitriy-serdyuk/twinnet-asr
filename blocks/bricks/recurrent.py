@@ -276,9 +276,9 @@ class SimpleRecurrent(BaseRecurrent, Initializable):
     """
     @lazy(allocation=['dim'])
     def __init__(self, dim, activation, **kwargs):
-        super(SimpleRecurrent, self).__init__(**kwargs)
         self.dim = dim
-        self.children = [activation]
+        children = [activation] + kwargs.get('children', [])
+        super(SimpleRecurrent, self).__init__(children=children, **kwargs)
 
     @property
     def W(self):
@@ -371,12 +371,12 @@ class LSTM(BaseRecurrent, Initializable):
     """
     @lazy(allocation=['dim'])
     def __init__(self, dim, activation=None, **kwargs):
-        super(LSTM, self).__init__(**kwargs)
         self.dim = dim
 
         if not activation:
             activation = Tanh()
-        self.children = [activation]
+        children = [activation] + kwargs.get('children', [])
+        super(LSTM, self).__init__(children=children, **kwargs)
 
     def get_dim(self, name):
         if name == 'inputs':
@@ -514,7 +514,6 @@ class GatedRecurrent(BaseRecurrent, Initializable):
     @lazy(allocation=['dim'])
     def __init__(self, dim, activation=None, gate_activation=None,
                  **kwargs):
-        super(GatedRecurrent, self).__init__(**kwargs)
         self.dim = dim
 
         self.recurrent_weights_init = None
@@ -527,7 +526,8 @@ class GatedRecurrent(BaseRecurrent, Initializable):
         self.activation = activation
         self.gate_activation = gate_activation
 
-        self.children = [activation, gate_activation]
+        children = [activation, gate_activation] + kwargs.get('children', [])
+        super(GatedRecurrent, self).__init__(children=children, **kwargs)
 
     @property
     def state_to_state(self):
@@ -645,12 +645,13 @@ class Bidirectional(Initializable):
 
     @lazy()
     def __init__(self, prototype, **kwargs):
-        super(Bidirectional, self).__init__(**kwargs)
         self.prototype = prototype
 
-        self.children = [copy.deepcopy(prototype) for _ in range(2)]
-        self.children[0].name = 'forward'
-        self.children[1].name = 'backward'
+        children = [copy.deepcopy(prototype) for _ in range(2)]
+        children[0].name = 'forward'
+        children[1].name = 'backward'
+        children += kwargs.get('children', [])
+        super(Bidirectional, self).__init__(children=children, **kwargs)
 
     @application
     def apply(self, *args, **kwargs):

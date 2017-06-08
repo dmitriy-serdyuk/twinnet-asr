@@ -703,7 +703,7 @@ def train(config, save_path, bokeh_name,
     log.status['_config'] = repr(config)
     main_loop = MainLoop(
         model=model, log=log, algorithm=algorithm,
-        data_stream=data.get_stream("train", num_examples=1000),
+        data_stream=data.get_stream("train"),
         extensions=extensions)
     main_loop.run()
 

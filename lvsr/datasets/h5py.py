@@ -18,7 +18,53 @@ class H5PYAudioDataset(H5PYDataset):
         self.bos_label = self.char2num.get('<bol>')
 
     def character_map(self, source):
-        return dict(self._file_handle[source].attrs['value_map'])
+        try:
+            return dict(self._file_handle[source].attrs['value_map'])
+        except:
+            return {'<eol>': 0, 
+                    'aa': 1,
+                    'ae': 2,
+                    'ah': 3,
+                    'ao': 4,
+                    'aw': 5,
+                    'ax': 6,
+                    'ay': 7,
+                    'b': 8,
+                    'ch': 9,
+                    'd': 10,
+                    'dh': 11,
+                    'eh': 12,
+                    'er': 13,
+                    'ey': 14,
+                    'f': 15,
+                    'g': 16,
+                    'hh': 17,
+                    'i': 18,
+                    'ih': 19,
+                    'iy': 20,
+                    'jh': 21,
+                    'k': 22,
+                    'l': 23,
+                    'm': 24,
+                    'n': 25,
+                    'ng': 26,
+                    'ow': 27,
+                    'oy': 28,
+                    'p': 29,
+                    'pau': 30,
+                    'r': 31,
+                    's': 32,
+                    'sh': 33,
+                    'ssil': 34,
+                    't': 35,
+                    'th': 36,
+                    'uh': 37,
+                    'uw': 38,
+                    'v': 39,
+                    'w': 40,
+                    'y': 41,
+                    'z': 42,
+                    'zh': 43}
 
     def dim(self, source):
         return self._file_handle[source + '_shapes'][0][1]

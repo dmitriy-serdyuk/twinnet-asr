@@ -91,7 +91,7 @@ class NDarrayLog(TrainingLogBase):
                     idx = self._col_tops[k]
                     self._col_tops[k] = idx + 1
                     if idx >= col.shape[0]:
-                        col2 = numpy.empty((1.3 * idx), col.dtype)
+                        col2 = numpy.empty(int(1.3 * idx), col.dtype)
                         col2[:idx] = col
                         col2[idx:]['idx'] = 2147483647
                         col = col2

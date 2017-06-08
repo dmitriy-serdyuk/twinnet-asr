@@ -121,6 +121,12 @@ class PhonemeErrorRate(MonitoredQuantity):
         self.num_examples += 1
         self.mean_error = self.total_errors / self.total_length
 
+    def aggregate(self, *args):
+        self.accumulate(*args)
+
+    def get_aggregated_value(self):
+        return self.mean_error
+
     def readout(self):
         return self.mean_error
 
@@ -697,7 +703,7 @@ def train(config, save_path, bokeh_name,
     log.status['_config'] = repr(config)
     main_loop = MainLoop(
         model=model, log=log, algorithm=algorithm,
-        data_stream=data.get_stream("train"),
+        data_stream=data.get_stream("train", num_examples=1000),
         extensions=extensions)
     main_loop.run()
 

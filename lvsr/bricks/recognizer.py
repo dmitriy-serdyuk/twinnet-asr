@@ -2,6 +2,7 @@ import numpy
 import theano
 import logging
 from theano import tensor
+from theano import gradient
 
 from blocks.bricks import (
     Bias, Identity, Initializable, MLP, Tanh)
@@ -240,114 +241,118 @@ class SpeechRecognizer(Initializable):
                           subsample, bidir=bidir)
         dim_encoded = encoder.get_dim(encoder.apply.outputs[0])
 
-        # The top part, on top of BiRNN but before the attention
-        if dims_top:
-            top = MLP([Tanh()],
-                      [dim_encoded] + dims_top + [dim_encoded], name="top")
-        else:
-            top = Identity(name='top')
+        generators = [None, None]
+        for i in range(2):
+            # The top part, on top of BiRNN but before the attention
+            if dims_top:
+                top = MLP([Tanh()],
+                          [dim_encoded] + dims_top + [dim_encoded], name="top{}".format(i))
+            else:
+                top = Identity(name='top{}'.format(i))
 
-        if dec_stack == 1:
-            transition = self.dec_transition(
-                dim=dim_dec, activation=Tanh(), name="transition")
-        else:
-            transitions = [self.dec_transition(dim=dim_dec,
-                                               activation=Tanh(),
-                                               name="transition_{}".format(trans_level))
-                           for trans_level in xrange(dec_stack)]
-            transition = RecurrentStack(transitions=transitions,
-                                        skip_connections=True)
-        # Choose attention mechanism according to the configuration
-        if attention_type == "content":
-            attention = SequenceContentAttention(
-                state_names=transition.apply.states,
-                attended_dim=dim_encoded, match_dim=dim_matcher,
-                name="cont_att")
-        elif attention_type == "content_and_conv":
-            attention = SequenceContentAndConvAttention(
-                state_names=transition.apply.states,
-                conv_n=conv_n,
-                conv_num_filters=conv_num_filters,
-                attended_dim=dim_encoded, match_dim=dim_matcher,
-                prior=prior,
-                energy_normalizer=energy_normalizer,
-                name="conv_att")
-        else:
-            raise ValueError("Unknown attention type {}"
-                             .format(attention_type))
-        if embed_outputs:
-            feedback = LookupFeedback(num_phonemes + 1,
-                                      dim_dec if
-                                      dim_output_embedding is None
-                                      else dim_output_embedding)
-        else:
-            feedback = OneOfNFeedback(num_phonemes + 1)
-        if criterion['name'] == 'log_likelihood':
-            emitter = SoftmaxEmitter(initial_output=num_phonemes, name="emitter")
-            if lm:
-                # In case we use LM it is Readout that is responsible
-                # for normalization.
-                emitter = LMEmitter()
-        elif criterion['name'].startswith('mse'):
-            emitter = RewardRegressionEmitter(
-                criterion['name'], eos_label, num_phonemes,
-                criterion.get('min_reward', -1.0),
-                name="emitter")
-        else:
-            raise ValueError("Unknown criterion {}".format(criterion['name']))
-        readout_config = dict(
-            readout_dim=num_phonemes,
-            source_names=(transition.apply.states if use_states_for_readout else [])
-                         + [attention.take_glimpses.outputs[0]],
-            emitter=emitter,
-            feedback_brick=feedback,
-            name="readout")
-        if post_merge_dims:
-            readout_config['merged_dim'] = post_merge_dims[0]
-            readout_config['post_merge'] = InitializableSequence([
-                Bias(post_merge_dims[0]).apply,
-                post_merge_activation.apply,
-                MLP([post_merge_activation] * (len(post_merge_dims) - 1) + [Identity()],
-                    # MLP was designed to support Maxout is activation
-                    # (because Maxout in a way is not one). However
-                    # a single layer Maxout network works with the trick below.
-                    # For deeper Maxout network one has to use the
-                    # Sequence brick.
-                    [d//getattr(post_merge_activation, 'num_pieces', 1)
-                     for d in post_merge_dims] + [num_phonemes]).apply,
-            ],
-                name='post_merge')
-        readout = Readout(**readout_config)
+            if dec_stack == 1:
+                transition = self.dec_transition(
+                    dim=dim_dec, activation=Tanh(), name="transition{}".format(i))
+            else:
+                transitions = [self.dec_transition(dim=dim_dec,
+                                                   activation=Tanh(),
+                                                   name="transition_{}_{}".format(i, trans_level))
+                               for trans_level in xrange(dec_stack)]
+                transition = RecurrentStack(transitions=transitions,
+                                            skip_connections=True)
+            # Choose attention mechanism according to the configuration
+            if attention_type == "content":
+                attention = SequenceContentAttention(
+                    state_names=transition.apply.states,
+                    attended_dim=dim_encoded, match_dim=dim_matcher,
+                    name="cont_att" + i)
+            elif attention_type == "content_and_conv":
+                attention = SequenceContentAndConvAttention(
+                    state_names=transition.apply.states,
+                    conv_n=conv_n,
+                    conv_num_filters=conv_num_filters,
+                    attended_dim=dim_encoded, match_dim=dim_matcher,
+                    prior=prior,
+                    energy_normalizer=energy_normalizer,
+                    name="conv_att{}".format(i))
+            else:
+                raise ValueError("Unknown attention type {}"
+                                 .format(attention_type))
+            if embed_outputs:
+                feedback = LookupFeedback(num_phonemes + 1,
+                                          dim_dec if
+                                          dim_output_embedding is None
+                                          else dim_output_embedding)
+            else:
+                feedback = OneOfNFeedback(num_phonemes + 1)
+            if criterion['name'] == 'log_likelihood':
+                emitter = SoftmaxEmitter(initial_output=num_phonemes, name="emitter{}".format(i))
+                if lm:
+                    # In case we use LM it is Readout that is responsible
+                    # for normalization.
+                    emitter = LMEmitter()
+            elif criterion['name'].startswith('mse'):
+                emitter = RewardRegressionEmitter(
+                    criterion['name'], eos_label, num_phonemes,
+                    criterion.get('min_reward', -1.0),
+                    name="emitter")
+            else:
+                raise ValueError("Unknown criterion {}".format(criterion['name']))
+            readout_config = dict(
+                readout_dim=num_phonemes,
+                source_names=(transition.apply.states if use_states_for_readout else [])
+                             + [attention.take_glimpses.outputs[0]],
+                emitter=emitter,
+                feedback_brick=feedback,
+                name="readout{}".format(i))
+            if post_merge_dims:
+                readout_config['merged_dim'] = post_merge_dims[0]
+                readout_config['post_merge'] = InitializableSequence([
+                    Bias(post_merge_dims[0]).apply,
+                    post_merge_activation.apply,
+                    MLP([post_merge_activation] * (len(post_merge_dims) - 1) + [Identity()],
+                        # MLP was designed to support Maxout is activation
+                        # (because Maxout in a way is not one). However
+                        # a single layer Maxout network works with the trick below.
+                        # For deeper Maxout network one has to use the
+                        # Sequence brick.
+                        [d//getattr(post_merge_activation, 'num_pieces', 1)
+                         for d in post_merge_dims] + [num_phonemes]).apply,
+                ],
+                    name='post_merge{}'.format(i))
+            readout = Readout(**readout_config)
 
-        language_model = None
-        if lm and lm.get('path'):
-            lm_weight = lm.pop('weight', 0.0)
-            normalize_am_weights = lm.pop('normalize_am_weights', True)
-            normalize_lm_weights = lm.pop('normalize_lm_weights', False)
-            normalize_tot_weights = lm.pop('normalize_tot_weights', False)
-            am_beta = lm.pop('am_beta', 1.0)
-            if normalize_am_weights + normalize_lm_weights + normalize_tot_weights < 1:
-                logger.warn("Beam search is prone to fail with no log-prob normalization")
-            language_model = LanguageModel(nn_char_map=character_map, **lm)
-            readout = ShallowFusionReadout(lm_costs_name='lm_add',
-                                           lm_weight=lm_weight,
-                                           normalize_am_weights=normalize_am_weights,
-                                           normalize_lm_weights=normalize_lm_weights,
-                                           normalize_tot_weights=normalize_tot_weights,
-                                           am_beta=am_beta,
-                                           **readout_config)
+            language_model = None
+            if lm and lm.get('path'):
+                lm_weight = lm.pop('weight', 0.0)
+                normalize_am_weights = lm.pop('normalize_am_weights', True)
+                normalize_lm_weights = lm.pop('normalize_lm_weights', False)
+                normalize_tot_weights = lm.pop('normalize_tot_weights', False)
+                am_beta = lm.pop('am_beta', 1.0)
+                if normalize_am_weights + normalize_lm_weights + normalize_tot_weights < 1:
+                    logger.warn("Beam search is prone to fail with no log-prob normalization")
+                language_model = LanguageModel(nn_char_map=character_map, **lm)
+                readout = ShallowFusionReadout(lm_costs_name='lm_add',
+                                               lm_weight=lm_weight,
+                                               normalize_am_weights=normalize_am_weights,
+                                               normalize_lm_weights=normalize_lm_weights,
+                                               normalize_tot_weights=normalize_tot_weights,
+                                               am_beta=am_beta,
+                                               **readout_config)
 
-        generator = SequenceGenerator(
-            readout=readout, transition=transition, attention=attention,
-            language_model=language_model,
-            name="generator")
+            generators[i] = SequenceGenerator(
+                readout=readout, transition=transition, attention=attention,
+                language_model=language_model,
+                name="generator{}".format(i))
+
+        self.generator = generators[0]
 
         # Remember child bricks
         self.encoder = encoder
         self.bottom = bottom
         self.top = top
-        self.generator = generator
-        self.children = [encoder, top, bottom, generator]
+        self.generators = generators
+        self.children = [encoder, top, bottom] + generators
 
         # Create input variables
         self.inputs = self.bottom.batch_inputs
@@ -385,9 +390,21 @@ class SpeechRecognizer(Initializable):
             input_=bottom_processed,
             mask=inputs_mask)
         encoded = self.top.apply(encoded)
-        return self.generator.cost_matrix(
+        outs_forward = self.generators[0].evaluate(
             labels, labels_mask,
             attended=encoded, attended_mask=encoded_mask)
+        costs_forward, states_forward, _, _, _, _  = outs_forward
+        outs_backward = self.generators[1].evaluate(
+            labels[::-1], labels_mask[::-1],
+            attended=encoded[::-1], attended_mask=encoded_mask[::-1])
+        costs_backward, states_backward, _, _, _, _  = outs_forward
+        costs_backward = costs_backward[::-1]
+        states_backward = states_backward[::-1]
+
+        #TODO regularization
+        states_backward = gradient.disconnected_grad(states_backward)
+        l2_cost = ((states_forward - states_backward) ** 2).mean(axis=2)
+        return costs_forward + costs_backward + 0.5 * l2_cost
 
     @application
     def generate(self, **kwargs):

@@ -395,7 +395,7 @@ class SpeechRecognizer(Initializable):
             attended=encoded, attended_mask=encoded_mask)
         costs_forward, states_forward, _, _, _, _  = outs_forward
         outs_backward = self.generators[1].evaluate(
-            labels[::-1], labels_mask[::-1],
+            labels[::-1], labels_mask[::-1] if labels_mask else None,
             attended=encoded[::-1], attended_mask=encoded_mask[::-1])
         costs_backward, states_backward, _, _, _, _  = outs_forward
         costs_backward = costs_backward[::-1]

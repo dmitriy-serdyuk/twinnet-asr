@@ -397,11 +397,10 @@ class SpeechRecognizer(Initializable):
         outs_backward = self.generators[1].evaluate(
             labels[::-1], labels_mask[::-1] if labels_mask else None,
             attended=encoded[::-1], attended_mask=encoded_mask[::-1])
-        costs_backward, states_backward, _, _, _, _  = outs_forward
+        costs_backward, states_backward, _, _, _, _  = outs_backward
         costs_backward = costs_backward[::-1]
         states_backward = states_backward[::-1]
 
-        #TODO regularization
         states_backward = gradient.disconnected_grad(states_backward)
         l2_cost = ((states_forward - states_backward) ** 2).mean(axis=2)
         return costs_forward + costs_backward + 0.5 * l2_cost

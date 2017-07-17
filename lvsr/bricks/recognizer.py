@@ -5,7 +5,7 @@ from theano import tensor
 from theano import gradient
 
 from blocks.bricks import (
-    Bias, Identity, Initializable, MLP, Tanh)
+    Bias, Identity, Initializable, MLP, Tanh, Linear)
 from blocks.bricks.attention import SequenceContentAttention
 from blocks.bricks.base import application
 from blocks.bricks.recurrent import (
@@ -347,6 +347,8 @@ class SpeechRecognizer(Initializable):
 
         self.generator = generators[0]
 
+        self.forward_to_backward = Linear(dim_dec, dim_dec)
+
         # Remember child bricks
         self.encoder = encoder
         self.bottom = bottom
@@ -397,12 +399,17 @@ class SpeechRecognizer(Initializable):
         outs_backward = self.generators[1].evaluate(
             labels[::-1], labels_mask[::-1] if labels_mask else None,
             attended=encoded[::-1], attended_mask=encoded_mask[::-1])
-        costs_backward, states_backward, _, _, _, _  = outs_backward
+        costs_backward, states_backward, _, _, _, _ = outs_backward
         costs_backward = costs_backward[::-1]
         states_backward = states_backward[::-1]
 
+        states_shape = states_forward.shape
+        backward_predicted = self.forward_to_backward.apply(
+            states_forward.reshape((states_shape[0] * states_shape[1], -1)))
+        backward_predicted = backward_predicted.reshape(states_shape)
+
         states_backward = gradient.disconnected_grad(states_backward)
-        l2_cost = ((states_forward - states_backward) ** 2).mean(axis=2)
+        l2_cost = ((backward_predicted - states_backward) ** 2).mean(axis=2)
         return costs_forward + costs_backward + 0.5 * l2_cost
 
     @application

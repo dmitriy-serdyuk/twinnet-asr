@@ -354,7 +354,7 @@ class SpeechRecognizer(Initializable):
         self.bottom = bottom
         self.top = top
         self.generators = generators
-        self.children = [encoder, top, bottom] + generators
+        self.children = [self.forward_to_backward, encoder, top, bottom] + generators
 
         # Create input variables
         self.inputs = self.bottom.batch_inputs

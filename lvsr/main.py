@@ -373,6 +373,13 @@ def initialize_all(config, save_path, bokeh_name,
     weights, = VariableFilter(
         applications=[r.generator.evaluate], name="weights")(
             cost_cg)
+
+    from blocks.roles import AUXILIARY
+    l2_cost, = VariableFilter(
+        roles=[AUXILIARY], theano_name='l2_cost_aux')(cost_cg)
+    cost_forward, = VariableFilter(
+        roles=[AUXILIARY], theano_name='costs_forward_aux')(cost_cg)
+
     max_recording_length = rename(bottom_output.shape[0],
                                   "max_recording_length")
     # To exclude subsampling related bugs
@@ -589,13 +596,13 @@ def initialize_all(config, save_path, bokeh_name,
         #CodeVersion(['lvsr']),
     ]
     extensions.append(TrainingDataMonitoring(
-        primary_observables, after_batch=True))
+        primary_observables + [l2_cost, cost_forward], after_batch=True))
     average_monitoring = TrainingDataMonitoring(
         attach_aggregation_schemes(secondary_observables),
         prefix="average", every_n_batches=10)
     extensions.append(average_monitoring)
     validation = DataStreamMonitoring(
-        attach_aggregation_schemes(validation_observables),
+        attach_aggregation_schemes(validation_observables + [l2_cost, cost_forward]),
         data.get_stream("valid", shuffle=False), prefix="valid").set_conditions(
             before_first_epoch=not fast_start,
             every_n_epochs=mon_conf['validate_every_epochs'],

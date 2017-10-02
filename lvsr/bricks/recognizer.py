@@ -380,7 +380,7 @@ class SpeechRecognizer(Initializable):
                                               {'initial_states_init': self.initial_states_init})
 
     @application
-    def cost(self, **kwargs):
+    def cost(self, application_call, **kwargs):
         # pop inputs we know about
         inputs_mask = kwargs.pop('inputs_mask')
         labels = kwargs.pop('labels')
@@ -407,10 +407,16 @@ class SpeechRecognizer(Initializable):
         backward_predicted = self.forward_to_backward.apply(
             states_forward.reshape((states_shape[0] * states_shape[1], -1)))
         backward_predicted = backward_predicted.reshape(states_shape)
+        backward_predicted = backward_predicted * labels_mask[:, :, None]
 
         states_backward = gradient.disconnected_grad(states_backward)
+        states_backward = states_backward * labels_mask[:, :, None]
         l2_cost = ((backward_predicted - states_backward) ** 2).mean(axis=2)
-        return costs_forward + costs_backward + 0.5 * l2_cost
+        l2_cost.name = 'l2_cost_aux'
+        application_call.add_auxiliary_variable(l2_cost.sum(axis=0).mean().copy(name='l2_cost_aux'))
+        costs_forward_aux = (costs_forward.sum(axis=0).mean()).copy(name='costs_forward_aux')
+        application_call.add_auxiliary_variable(costs_forward_aux)
+        return costs_forward + costs_backward + 1.5 * l2_cost
 
     @application
     def generate(self, **kwargs):
